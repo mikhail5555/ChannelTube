@@ -9,12 +9,9 @@ import threading
 import time
 from typing import Set
 
-import requests
 import yt_dlp
 from flask import Flask, render_template
 from flask_socketio import SocketIO
-from mutagen.mp4 import MP4
-from plexapi.server import PlexServer
 
 PERMANENT_RETENTION = -1
 VIDEO_EXTENSIONS = {".mp4", ".mkv"}
@@ -231,7 +228,7 @@ class DataHandler:
                     self.general_logger.warning(f"Ignoring short video: {video_title} - {video_link}")
                     continue
 
-                if youtube_video_id in existing_youtube_ids["id_list"]:
+                if youtube_video_id in existing_youtube_ids:
                     self.general_logger.warning(f"File for video ({youtube_video_id=}): {video_title} already in folder.")
                     continue
 
@@ -283,9 +280,9 @@ class DataHandler:
 
             file_base_name, file_ext = os.path.splitext(filename)
             if file_ext.lower() in MEDIA_FILE_EXTENSIONS:
-                youtube_video_id = YOUTUBE_ID_FROM_FILENAME_REGEX.match(file_base_name)
+                youtube_video_id = YOUTUBE_ID_FROM_FILENAME_REGEX.search(file_base_name)
                 if youtube_video_id is not None:
-                    youtube_ids.add(youtube_video_id)
+                    youtube_ids.add(youtube_video_id.string)
 
         self.general_logger.warning(f'Found {len(youtube_ids)} IDs in {channel_folder_path}.')
         return youtube_ids
