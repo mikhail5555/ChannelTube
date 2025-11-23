@@ -521,7 +521,7 @@ class DataHandler:
             current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             m4_file = MP4(file_path)
             m4_file["\xa9day"] = current_datetime
-            m4_file["\xa9cmt"] = item["id"]
+            m4_file[EMBEDDED_VIDEO_ID_PROPERTY] = item["id"]
             m4_file["\xa9nam"] = item["title"]
             m4_file["\xa9ART"] = item["channel_name"]
             m4_file["\xa9gen"] = item["channel_name"]
