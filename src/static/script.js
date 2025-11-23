@@ -2,9 +2,6 @@ const config_modal = document.getElementById("config-modal");
 const save_changes_button = document.getElementById("save-changes-button");
 const manual_start_button = document.getElementById("manual-start-button");
 const sync_start_times = document.getElementById("sync-start-times");
-const media_server_addresses = document.getElementById("media-server-addresses");
-const media_server_tokens = document.getElementById("media-server-tokens");
-const media_server_library_name = document.getElementById("media-server-library-name");
 const add_channel = document.getElementById("add-channel");
 const channel_table = document.getElementById("channel-table").querySelector("tbody");
 const modal_channel_template = document.getElementById("modal-channel-template").content;
@@ -164,9 +161,6 @@ manual_start_button.addEventListener("click", () => {
 save_changes_button.addEventListener("click", () => {
     socket.emit("save_settings", {
         "sync_start_times": sync_start_times.value,
-        "media_server_addresses": media_server_addresses.value,
-        "media_server_tokens": media_server_tokens.value,
-        "media_server_library_name": media_server_library_name.value,
     });
 });
 
@@ -207,9 +201,6 @@ socket.on("new_channel_added", function (new_channel) {
 
 socket.on("current_settings", function (settings) {
     sync_start_times.value = settings.sync_start_times.join(", ");
-    media_server_addresses.value = settings.media_server_addresses;
-    media_server_tokens.value = settings.media_server_tokens;
-    media_server_library_name.value = settings.media_server_library_name;
 });
 
 
