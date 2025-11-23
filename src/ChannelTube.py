@@ -1,23 +1,26 @@
-import logging
-import re
-import os
-import json
-import time
-import datetime
-import threading
-from mutagen.mp4 import MP4
 import concurrent.futures
+import datetime
+import json
+import logging
+import os
+import re
+import tempfile
+import threading
+import time
+from typing import Optional
+
+import requests
+import yt_dlp
 from flask import Flask, render_template
 from flask_socketio import SocketIO
-import yt_dlp
+from mutagen.mp4 import MP4
 from plexapi.server import PlexServer
-import requests
-import tempfile
 
 PERMANENT_RETENTION = -1
 VIDEO_EXTENSIONS = {".mp4"}
 AUDIO_EXTENSIONS = {".m4a"}
 MEDIA_FILE_EXTENSIONS = VIDEO_EXTENSIONS.union(AUDIO_EXTENSIONS)
+EMBEDDED_VIDEO_ID_PROPERTY = "\xa9cmt"
 
 
 class DataHandler:
@@ -48,7 +51,6 @@ class DataHandler:
         self.subtitles = "none" if self.subtitles not in ("none", "embed", "external") else self.subtitles
         self.subtitle_languages = os.environ.get("subtitle_languages", "en").split(",")
         self.include_id_in_filename = os.environ.get("include_id_in_filename", "false").lower() == "true"
-        self.include_info_json = os.environ.get("include_info_json", "false").lower() == "true"
         self.verbose_logs = os.environ.get("verbose_logs", "false").lower() == "true"
 
         os.makedirs(self.config_folder, exist_ok=True)
@@ -212,13 +214,13 @@ class DataHandler:
         cutoff_date = today - datetime.timedelta(days=days_to_retrieve)
 
         for video in playlist["entries"]:
-            try:
-                video_title = f'{video["title"]} [{video["id"]}]' if self.include_id_in_filename else video["title"]
-                video_link = video["url"]
-                duration = 0 if not video["duration"] else video["duration"]
-                youtube_video_id = video["id"]
-                live_status = video["live_status"]
+            video_title = f'{video["title"]} [{video["id"]}]' if self.include_id_in_filename else video["title"]
+            video_link = video["url"]
+            duration = 0 if not video["duration"] else video["duration"]
+            youtube_video_id = video["id"]
+            live_status = video["live_status"]
 
+            try:
                 if channel["Live_Rule"] == "Only":
                     if len(video_to_download_list):
                         self.general_logger.warning(f"Live video found for channel: {channel_title}")
@@ -241,7 +243,14 @@ class DataHandler:
                     self.general_logger.warning(f"Ignoring short video: {video_title} - {video_link}")
                     continue
 
-                if youtube_video_id in current_channel_files["id_list"] or video_title in current_channel_files["filename_list"]:
+                fileByVideoId: Optional[MP4] = current_channel_files["id_list"].get(youtube_video_id)
+                fileByVideoName: Optional[MP4] = current_channel_files["filename_list"].get(video_title)
+                if fileByVideoId is not None or fileByVideoName is not None:
+                    if fileByVideoId is None:
+                        fileByVideoName[EMBEDDED_VIDEO_ID_PROPERTY] = [youtube_video_id]
+                        fileByVideoName.save()
+                        self.general_logger.info(f"{video_title=} was missing video_id, so it got updated to {youtube_video_id=}.")
+
                     self.general_logger.warning(f"File for video: {video_title} already in folder.")
                     continue
 
@@ -261,7 +270,8 @@ class DataHandler:
                     break
 
                 if age_in_hours < self.defer_hours and live_status is None:
-                    self.general_logger.warning(f"Video: {video_title} is {age_in_hours:.2f} hours old. Waiting until it's older than {self.defer_hours} hours.")
+                    self.general_logger.warning(
+                        f"Video: {video_title} is {age_in_hours:.2f} hours old. Waiting until it's older than {self.defer_hours} hours.")
                     continue
 
                 if channel.get("Filter_Title_Text"):
@@ -273,7 +283,8 @@ class DataHandler:
                         self.general_logger.warning(f'Skipped video: {video_title} as it does not contain the filter text: {channel["Filter_Title_Text"]}')
                         continue
 
-                video_to_download_list.append({"title": video_title, "upload_date": video_upload_date, "link": video_link, "id": youtube_video_id, "channel_name": channel_title})
+                video_to_download_list.append(
+                    {"title": video_title, "upload_date": video_upload_date, "link": video_link, "id": youtube_video_id, "channel_name": channel_title})
                 self.general_logger.warning(f"Added video to download list: {video_title} -> {video_link}")
 
             except Exception as e:
@@ -282,10 +293,10 @@ class DataHandler:
         return video_to_download_list
 
     def get_list_of_files_from_channel_folder(self, channel_folder_path):
+        folder_info = {"id_list": dict(), "filename_list": dict()}
+
         try:
-            folder_info = {"id_list": [], "filename_list": []}
-            raw_directory_list = os.listdir(channel_folder_path)
-            for filename in raw_directory_list:
+            for filename in os.listdir(channel_folder_path):
                 file_path = os.path.join(channel_folder_path, filename)
                 if not os.path.isfile(file_path):
                     continue
@@ -293,10 +304,11 @@ class DataHandler:
                 try:
                     file_base_name, file_ext = os.path.splitext(filename)
                     if file_ext.lower() in MEDIA_FILE_EXTENSIONS:
-                        folder_info["filename_list"].append(file_base_name)
                         mp4_file = MP4(file_path)
-                        embedded_video_id = mp4_file.get("\xa9cmt", [None])[0]
-                        folder_info["id_list"].append(embedded_video_id)
+                        folder_info["filename_list"][file_base_name] = mp4_file
+
+                        if (embedded_video_property := mp4_file.get(EMBEDDED_VIDEO_ID_PROPERTY)) and embedded_video_property is not None:
+                            folder_info["id_list"][embedded_video_property[0]] = mp4_file
 
                 except Exception as e:
                     self.general_logger.error(f"No video ID present or cannot read it from metadata of {filename}: {e}")
@@ -390,79 +402,79 @@ class DataHandler:
     def download_items(self, item_list, channel_folder_path, channel):
         for item in item_list:
             self.general_logger.warning(f'Starting download: {item["title"]}')
+            temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+
+            link = item["link"]
+            cleaned_title = self.string_cleaner(item["title"])
+            selected_media_type = channel["Media_Type"]
+            post_processors = [
+                {"key": "SponsorBlock", "categories": ["sponsor"]},
+                {"key": "ModifyChapters", "remove_sponsor_segments": ["sponsor"]},
+            ]
+
+            if selected_media_type == "Video":
+                selected_ext = "mp4"
+                selected_format = f"{self.video_format_id}+{self.audio_format_id}/bestvideo[vcodec^={self.fallback_vcodec}]+bestaudio[acodec^={self.fallback_acodec}]/bestvideo+bestaudio/best"
+                merge_output_format = selected_ext
+
+            else:
+                selected_ext = "m4a"
+                selected_format = f"{self.audio_format_id}/bestaudio[acodec^={self.fallback_acodec}]/bestaudio"
+                merge_output_format = None
+                post_processors.append(
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": selected_ext,
+                        "preferredquality": 0,
+                    }
+                )
+            post_processors.extend(
+                [
+                    {"key": "FFmpegMetadata"},
+                    {"key": "EmbedThumbnail"},
+                ]
+            )
+
+            folder_and_filename = os.path.join(channel_folder_path, cleaned_title)
+            ydl_opts = {
+                "paths": {"home": channel_folder_path, "temp": temp_dir.name},
+                "logger": self.general_logger,
+                "ffmpeg_location": "/usr/bin/ffmpeg",
+                "format": selected_format,
+                "outtmpl": f"{cleaned_title}.%(ext)s",
+                "quiet": True,
+                "writethumbnail": True,
+                "progress_hooks": [self.progress_callback],
+                "postprocessors": post_processors,
+                "no_mtime": True,
+                "live_from_start": True,
+                "extractor_args": {"youtubetab": {"skip": ["authcheck"]}},
+                "verbose": self.verbose_logs,
+                "writeinfojson": True,
+                "embed_infojson": True,
+                "addmetadata": True,
+            }
+
+            if self.subtitles in ["embed", "external"]:
+                ydl_opts.update(
+                    {
+                        "subtitlesformat": "best",
+                        "writeautomaticsub": True,
+                        "writesubtitles": True,
+                        "subtitleslangs": self.subtitle_languages,
+                    }
+                )
+                if self.subtitles == "embed":
+                    post_processors.extend([{"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False}])
+                elif self.subtitles == "external":
+                    post_processors.extend([{"key": "FFmpegSubtitlesConvertor", "format": "srt", "when": "before_dl"}])
+
+            if merge_output_format:
+                ydl_opts["merge_output_format"] = merge_output_format
+            if self.cookies_path:
+                ydl_opts["cookiefile"] = self.cookies_path
 
             try:
-                temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-                link = item["link"]
-                cleaned_title = self.string_cleaner(item["title"])
-                selected_media_type = channel["Media_Type"]
-                post_processors = [
-                    {"key": "SponsorBlock", "categories": ["sponsor"]},
-                    {"key": "ModifyChapters", "remove_sponsor_segments": ["sponsor"]},
-                ]
-
-                if selected_media_type == "Video":
-                    selected_ext = "mp4"
-                    selected_format = f"{self.video_format_id}+{self.audio_format_id}/bestvideo[vcodec^={self.fallback_vcodec}]+bestaudio[acodec^={self.fallback_acodec}]/bestvideo+bestaudio/best"
-                    merge_output_format = selected_ext
-
-                else:
-                    selected_ext = "m4a"
-                    selected_format = f"{self.audio_format_id}/bestaudio[acodec^={self.fallback_acodec}]/bestaudio"
-                    merge_output_format = None
-                    post_processors.append(
-                        {
-                            "key": "FFmpegExtractAudio",
-                            "preferredcodec": selected_ext,
-                            "preferredquality": 0,
-                        }
-                    )
-
-                post_processors.extend(
-                    [
-                        {"key": "FFmpegMetadata"},
-                        {"key": "EmbedThumbnail"},
-                    ]
-                )
-
-                folder_and_filename = os.path.join(channel_folder_path, cleaned_title)
-                ydl_opts = {
-                    "paths": {"home": channel_folder_path, "temp": temp_dir.name},
-                    "logger": self.general_logger,
-                    "ffmpeg_location": "/usr/bin/ffmpeg",
-                    "format": selected_format,
-                    "outtmpl": f"{cleaned_title}.%(ext)s",
-                    "quiet": True,
-                    "writethumbnail": True,
-                    "progress_hooks": [self.progress_callback],
-                    "postprocessors": post_processors,
-                    "no_mtime": True,
-                    "live_from_start": True,
-                    "extractor_args": {"youtubetab": {"skip": ["authcheck"]}},
-                    "verbose": self.verbose_logs,
-                }
-
-                if self.subtitles in ["embed", "external"]:
-                    ydl_opts.update(
-                        {
-                            "subtitlesformat": "best",
-                            "writeautomaticsub": True,
-                            "writesubtitles": True,
-                            "subtitleslangs": self.subtitle_languages,
-                        }
-                    )
-                    if self.subtitles == "embed":
-                        post_processors.extend([{"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False}])
-                    elif self.subtitles == "external":
-                        post_processors.extend([{"key": "FFmpegSubtitlesConvertor", "format": "srt", "when": "before_dl"}])
-
-                if merge_output_format:
-                    ydl_opts["merge_output_format"] = merge_output_format
-                if self.cookies_path:
-                    ydl_opts["cookiefile"] = self.cookies_path
-                if self.include_info_json:
-                    ydl_opts["writeinfojson"] = True
-
                 yt_downloader = yt_dlp.YoutubeDL(ydl_opts)
                 self.general_logger.warning(f"yt_dlp -> Starting to download: {link}")
 
@@ -557,7 +569,8 @@ class DataHandler:
     def process_channel(self, channel):
         try:
             channel["Last_Synced"] = "In Progress"
-            channel_folder_path = os.path.join(self.audio_download_folder, channel["Name"]) if channel["Media_Type"] == "Audio" else os.path.join(self.download_folder, channel["Name"])
+            channel_folder_path = os.path.join(self.audio_download_folder, channel["Name"]) if channel["Media_Type"] == "Audio" else os.path.join(
+                self.download_folder, channel["Name"])
             os.makedirs(channel_folder_path, exist_ok=True)
 
             self.general_logger.warning(f'Getting current list of files for channel: {channel["Name"]} from {channel_folder_path}')
@@ -777,5 +790,3 @@ def manual_start():
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000)
-
-

@@ -1,0 +1,15 @@
+[project]
+name = "channeltube"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "flask-socketio>=5.5.1",
+    "flask>=3.1.1",
+    "gevent-websocket>=0.10.1",
+    "gevent>=25.5.1",
+    "gunicorn>=23.0.0",
+    "mutagen>=1.47.0",
+    "plexapi>=4.17.0",
+    "yt-dlp==2025.11.12",
+]
