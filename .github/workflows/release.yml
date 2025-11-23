@@ -47,11 +47,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          load: true
           cache-from: type=gha,scope=release
           cache-to: type=gha,mode=max,scope=release
-          build-args: |
-            RELEASE_VERSION=${{ env.VERSION }}
           tags: |
             ${{ env.IMAGE }}:${{ env.VERSION }}
             ${{ env.IMAGE }}:latest
