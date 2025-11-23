@@ -1,5 +1,4 @@
 #!/bin/sh
-set -euxo pipefail
 
 echo -e "\033[1;32mTheWicklowWolf\033[0m"
 echo -e "\033[1;34mChannelTube\033[0m"
