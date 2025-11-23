@@ -8,11 +8,14 @@ ENV RELEASE_VERSION=${RELEASE_VERSION}
 RUN apk update && apk add --no-cache ffmpeg su-exec deno
 
 # Create directories and set permissions
-COPY . /channeltube
 WORKDIR /channeltube
+COPY requirements.txt .
 
 # Install requirements
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy rest of files after install dependancies
+COPY . .
 
 # Make the script executable
 RUN chmod +x thewicklowwolf-init.sh
