@@ -7,7 +7,6 @@ import re
 import tempfile
 import threading
 import time
-from typing import Optional
 
 import requests
 import yt_dlp
@@ -243,14 +242,7 @@ class DataHandler:
                     self.general_logger.warning(f"Ignoring short video: {video_title} - {video_link}")
                     continue
 
-                fileByVideoId: Optional[MP4] = current_channel_files["id_list"].get(youtube_video_id)
-                fileByVideoName: Optional[MP4] = current_channel_files["filename_list"].get(video_title)
-                if fileByVideoId is not None or fileByVideoName is not None:
-                    if fileByVideoId is None:
-                        fileByVideoName[EMBEDDED_VIDEO_ID_PROPERTY] = [youtube_video_id]
-                        fileByVideoName.save()
-                        self.general_logger.info(f"{video_title=} was missing video_id, so it got updated to {youtube_video_id=}.")
-
+                if youtube_video_id in current_channel_files["id_list"] or video_title in current_channel_files["filename_list"]:
                     self.general_logger.warning(f"File for video: {video_title} already in folder.")
                     continue
 
@@ -293,7 +285,7 @@ class DataHandler:
         return video_to_download_list
 
     def get_list_of_files_from_channel_folder(self, channel_folder_path):
-        folder_info = {"id_list": dict(), "filename_list": dict()}
+        folder_info = {"id_list": set(), "filename_list": set()}
 
         try:
             for filename in os.listdir(channel_folder_path):
@@ -305,10 +297,10 @@ class DataHandler:
                     file_base_name, file_ext = os.path.splitext(filename)
                     if file_ext.lower() in MEDIA_FILE_EXTENSIONS:
                         mp4_file = MP4(file_path)
-                        folder_info["filename_list"][file_base_name] = mp4_file
+                        folder_info["filename_list"].add(file_base_name)
 
                         if (embedded_video_property := mp4_file.get(EMBEDDED_VIDEO_ID_PROPERTY)) and embedded_video_property is not None:
-                            folder_info["id_list"][embedded_video_property[0]] = mp4_file
+                            folder_info["id_list"].add(embedded_video_property[0])
 
                 except Exception as e:
                     self.general_logger.error(f"No video ID present or cannot read it from metadata of {filename}: {e}")
@@ -452,6 +444,8 @@ class DataHandler:
                 "verbose": self.verbose_logs,
                 "writeinfojson": True,
                 "embed_infojson": True,
+                "embedthumbnail": True,
+                "embedsubtitles": True,
                 "addmetadata": True,
             }
 
