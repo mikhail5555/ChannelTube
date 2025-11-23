@@ -47,6 +47,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           file: ./Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           push: true
           build-args: |
             RELEASE_VERSION=${{ env.VERSION }}
